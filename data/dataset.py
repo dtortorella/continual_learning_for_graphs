@@ -15,6 +15,7 @@ from torch_geometric.data import InMemoryDataset, Data, download_url, extract_zi
 from torch_geometric.utils import from_networkx
 from torch_geometric.datasets import TUDataset, Planetoid, KarateClub
 from torch_geometric.io import read_tu_data
+from torch_geometric.transforms import FaceToEdge
 from ogb.graphproppred import PygGraphPropPredDataset
 
 
@@ -443,19 +444,28 @@ class CLSplitDataset:
 
 
 class GNNBenchmarkDataset(InMemoryDataset, DatasetInterface, CLSplitDataset):
-    names = ['MNIST', 'CIFAR10']
-    url = 'https://pytorch-geometric.com/datasets/benchmarking-gnns'
 
-    def __init__(self, root, name, transform=None,
-                 pre_transform=None, pre_filter=None, use_node_attr=False,
-                 use_edge_attr=False, cleaned=False):
+    names = ['PATTERN', 'CLUSTER', 'MNIST', 'CIFAR10', 'TSP']
+
+    root_url = 'https://data.pyg.org/datasets/benchmarking-gnns'
+    urls = {
+        'PATTERN': f'{root_url}/PATTERN_v2.zip',
+        'CLUSTER': f'{root_url}/CLUSTER_v2.zip',
+        'MNIST': f'{root_url}/MNIST_v2.zip',
+        'CIFAR10': f'{root_url}/CIFAR10_v2.zip',
+        'TSP': f'{root_url}/TSP_v2.zip',
+    }
+
+    def __init__(self, root: str, name: str,
+                 transform=None, pre_transform=None, pre_filter=None,
+                 use_node_attr=False, use_edge_attr=False, cleaned=False):
         self.name = name
         assert self.name in self.names
 
-        super(GNNBenchmarkDataset, self).__init__(root, transform,
-                                                  pre_transform, pre_filter)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        super().__init__(root, transform, pre_transform, pre_filter)
 
+        self.data, self.slices = torch.load(self.processed_paths[0])
+    
     @property
     def dim_node_features(self):
         return self.data.x.shape[1] + self.data.pos.shape[1]
@@ -468,39 +478,38 @@ class GNNBenchmarkDataset(InMemoryDataset, DatasetInterface, CLSplitDataset):
     def dim_target(self):
         return 10
 
-    @property
-    def raw_dir(self):
-        return osp.join(self.root, self.name, 'raw')
-
-    @property
-    def processed_dir(self):
-        return osp.join(self.root, self.name, 'processed')
-
-    @property
-    def raw_file_names(self):
-        name = self.name
-        return [f'{name}_train.pt', f'{name}_val.pt', f'{name}_test.pt']
-
-    @property
-    def processed_file_names(self):
-        return ['data.pt']
-
     def get_indices_of_targets(self, class_list):
         targets = self.data.y
         indices = torch.nonzero(torch.sum(torch.stack([targets == c for c in class_list], dim=0), dim=0), as_tuple=False).squeeze().int().tolist()
         return indices
 
+    @property
+    def raw_dir(self) -> str:
+        return osp.join(self.root, self.name, 'raw')
+
+    @property
+    def processed_dir(self) -> str:
+        return osp.join(self.root, self.name, 'processed')
+
+    @property
+    def raw_file_names(self):
+        name = self.urls[self.name].split('/')[-1][:-4]
+        return [f'{name}.pt']
+
+    @property
+    def processed_file_names(self):
+        return ['data.pt']
+
     def download(self):
-        url = f'{self.url}/{self.name}.zip'
-        path = download_url(url, self.raw_dir)
+        path = download_url(self.urls[self.name], self.raw_dir)
         extract_zip(path, self.raw_dir)
         os.unlink(path)
 
     def process(self):
+        inputs = torch.load(self.raw_paths[0])
         data_list = []
-        for i in range(3):
-            self.data, self.slices = torch.load(self.raw_paths[i])
-            data_list.extend([self.get(i) for i in range(len(self))])
+        for i in range(len(inputs)):
+            data_list.extend([Data(**data_dict) for data_dict in inputs[i]])
 
         if self.pre_filter is not None:
             data_list = [d for d in data_list if self.pre_filter(d)]
@@ -510,9 +519,8 @@ class GNNBenchmarkDataset(InMemoryDataset, DatasetInterface, CLSplitDataset):
 
         torch.save(self.collate(data_list), self.processed_paths[0])
 
-    def __repr__(self):
-        return '{}({})'.format(self.name, len(self))
-
+    def __repr__(self) -> str:
+        return f'{self.name}({len(self)})'
 
 
 class OGBG(PygGraphPropPredDataset, DatasetInterface, CLSplitDataset):
